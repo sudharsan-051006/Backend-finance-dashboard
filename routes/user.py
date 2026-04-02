@@ -9,7 +9,15 @@ from utils.dependencies import get_current_user, require_role
 router = APIRouter(prefix="/users")
 
 @router.post("/")
-def create_user(user: UserCreate, db: Session = Depends(get_db)):
+def create_user(
+    user: UserCreate,
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_user)   # add this
+):
+    # Restrict access
+    if current_user.id != 3:
+        raise HTTPException(status_code=403, detail="Not authorized")
+
     db_user = User(
         name=user.name,
         email=user.email,
@@ -18,6 +26,7 @@ def create_user(user: UserCreate, db: Session = Depends(get_db)):
         department_id=user.department_id,
         emp_id="EMP"  # temporary
     )
+
     db.add(db_user)
     db.commit()
     db.refresh(db_user)
@@ -30,7 +39,7 @@ def get_all_users(
 ):
     #   Admin only
     if current_user.role_id != 1:
-        raise HTTPException(status_code=403, detail="Admin only")
+        raise HTTPException(status_code=403, detail="Not authorized")
 
     users = db.query(User).all()
 
@@ -43,7 +52,7 @@ def get_categories(
 ):
     # optional: remove this if all users can access
     if current_user.role_id not in [1, 2, 3]:
-        raise HTTPException(status_code=403, detail="Not allowed")
+        raise HTTPException(status_code=403, detail="Not authorized")
 
     categories = db.query(Category).all()
 
@@ -65,7 +74,7 @@ def update_user(
 ):
     #   Only Admin
     if current_user.role_id != 1:
-        raise HTTPException(status_code=403, detail="Admin only")
+        raise HTTPException(status_code=403, detail="Not authorized")
 
     user = db.query(User).filter(User.id == user_id).first()
 
