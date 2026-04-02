@@ -6,6 +6,13 @@ from models import User, Category
 from schemas.user import UserCreate, UserUpdate
 from utils.dependencies import get_current_user, require_role
 
+# -----------------------------------
+# ROLE DEFINITIONS
+# -----------------------------------
+from utils.roles import ADMIN, ANALYST, USER
+
+
+
 router = APIRouter(prefix="/users")
 
 @router.post("/")
@@ -15,7 +22,7 @@ def create_user(
     current_user = Depends(get_current_user)   # add this
 ):
     # Restrict access
-    if current_user.id != 3:
+    if current_user.id != ADMIN:  # Only Admin can create users
         raise HTTPException(status_code=403, detail="Not authorized")
 
     db_user = User(
@@ -37,13 +44,18 @@ def get_all_users(
     db: Session = Depends(get_db),
     current_user = Depends(get_current_user)
 ):
-    #   Admin only
-    if current_user.role_id != 1:
-        raise HTTPException(status_code=403, detail="Not authorized")
+    #  Admin → all users
+    if current_user.role_id == ADMIN:
+        return db.query(User).all()
 
-    users = db.query(User).all()
+    #  Analyst → only same department users
+    if current_user.role_id == ANALYST:
+        return db.query(User).filter(
+            User.department_id == current_user.department_id
+        ).all()
 
-    return users
+    #  Others → not allowed
+    raise HTTPException(status_code=403, detail="Not authorized")
 
 @router.get("/get-categories")
 def get_categories(
@@ -51,7 +63,7 @@ def get_categories(
     current_user = Depends(get_current_user)
 ):
     # optional: remove this if all users can access
-    if current_user.role_id not in [1, 2, 3]:
+    if current_user.role_id not in [ADMIN, ANALYST, USER]:
         raise HTTPException(status_code=403, detail="Not authorized")
 
     categories = db.query(Category).all()
@@ -64,7 +76,6 @@ def get_categories(
         for c in categories
     ]
 
-
 @router.patch("/{user_id}")
 def update_user(
     user_id: int,
@@ -72,8 +83,8 @@ def update_user(
     db: Session = Depends(get_db),
     current_user = Depends(get_current_user)
 ):
-    #   Only Admin
-    if current_user.role_id != 1:
+    #  Only Admin
+    if current_user.role_id != ADMIN:
         raise HTTPException(status_code=403, detail="Not authorized")
 
     user = db.query(User).filter(User.id == user_id).first()
@@ -107,11 +118,3 @@ def update_user(
 @router.get("/me")
 def get_me(current_user = Depends(get_current_user)):
     return current_user
-
-@router.get("/admin-only")
-def admin_only(user = Depends(require_role([1]))):
-    return {"message": "Admin access"}
-
-@router.get("/analytics")
-def analytics(user = Depends(require_role([1, 2]))):
-    return {"message": "Analytics access"}

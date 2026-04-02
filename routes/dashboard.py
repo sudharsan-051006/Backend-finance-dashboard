@@ -7,6 +7,9 @@ from database import get_db
 from models import Record, User, Category
 from utils.dependencies import get_current_user
 
+from utils.roles import ADMIN, ANALYST, USER
+
+
 router = APIRouter(prefix="/dashboard", tags=["Dashboard"])
 
 @router.get("/total-expense")
@@ -17,11 +20,11 @@ def total_expense(
     query = db.query(func.sum(Record.amount))
 
     # Admin → all data
-    if user.role_id == 1:
+    if user.role_id == ADMIN:
         total = query.scalar()
 
     # Analyst → department data
-    elif user.role_id == 2:
+    elif user.role_id == ANALYST:
         total = query.join(User, Record.created_by == User.id)\
                      .filter(User.department_id == user.department_id)\
                      .scalar()
@@ -38,23 +41,23 @@ def category_wise(
     user = Depends(get_current_user)
 ):
     query = db.query(
-        Category.name,
-        func.sum(Record.amount)
-    ).join(Category, Record.category_id == Category.id)
+        func.coalesce(Category.name, "Other").label("category"),
+        func.sum(Record.amount).label("total")
+    ).outerjoin(Category, Record.category_id == Category.id)
 
-    if user.role_id == 1:
-        data = query.group_by(Category.name).all()
+    if user.role_id == ADMIN:
+        data = query.group_by("category").all()
 
-    elif user.role_id == 2:
+    elif user.role_id == ANALYST:
         data = query.join(User, Record.created_by == User.id)\
                     .filter(User.department_id == user.department_id)\
-                    .group_by(Category.name).all()
+                    .group_by("category").all()
 
     else:
         data = query.filter(Record.created_by == user.id)\
-                    .group_by(Category.name).all()
+                    .group_by("category").all()
 
-    return [{"category": d[0], "total": d[1]} for d in data]
+    return [{"category": d.category, "total": d.total} for d in data]
 
 @router.get("/monthly")
 def monthly_trends(
@@ -66,10 +69,10 @@ def monthly_trends(
         func.sum(Record.amount)
     )
 
-    if user.role_id == 1:
+    if user.role_id == ADMIN:
         data = query.group_by(func.to_char(Record.created_at, 'YYYY-MM')).all()
 
-    elif user.role_id == 2:
+    elif user.role_id == ANALYST:
         data = query.join(User, Record.created_by == User.id)\
                     .filter(User.department_id == user.department_id)\
                     .group_by(func.to_char(Record.created_at, 'YYYY-MM')).all()
@@ -87,10 +90,10 @@ def recent_activity(
 ):
     query = db.query(Record).order_by(Record.created_at.desc())
 
-    if user.role_id == 1:
+    if user.role_id == ADMIN:
         data = query.limit(5).all()
 
-    elif user.role_id == 2:
+    elif user.role_id == ANALYST:
         data = query.join(User, Record.created_by == User.id)\
                     .filter(User.department_id == user.department_id)\
                     .limit(5).all()
