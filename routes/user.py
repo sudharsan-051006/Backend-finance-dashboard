@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from database import get_db
-from models import User
+from models import User, Category
 from schemas.user import UserCreate, UserUpdate
 from utils.dependencies import get_current_user, require_role
 
@@ -35,6 +35,26 @@ def get_all_users(
     users = db.query(User).all()
 
     return users
+
+@router.get("/get-categories")
+def get_categories(
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_user)
+):
+    # optional: remove this if all users can access
+    if current_user.role_id not in [1, 2, 3]:
+        raise HTTPException(status_code=403, detail="Not allowed")
+
+    categories = db.query(Category).all()
+
+    return [
+        {
+            "id": c.id,
+            "name": c.name
+        }
+        for c in categories
+    ]
+
 
 @router.patch("/{user_id}")
 def update_user(
