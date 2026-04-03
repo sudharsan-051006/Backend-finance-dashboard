@@ -7,33 +7,134 @@ from database import get_db
 from models import Record, User, Category
 from utils.dependencies import get_current_user
 
-from utils.roles import ADMIN, ANALYST, USER
+from utils.roles import ADMIN, ANALYST, Viewer as USER
 
 
 router = APIRouter(prefix="/dashboard", tags=["Dashboard"])
-
 @router.get("/total-expense")
 def total_expense(
     db: Session = Depends(get_db),
     user = Depends(get_current_user)
 ):
-    query = db.query(func.sum(Record.amount))
+    base_filter = [
+        Record.type == "expense",
+        Record.status == "approved"
+    ]
 
-    # Admin → all data
-    if user.role_id == ADMIN:
-        total = query.scalar()
+    # -------------------------
+    # USER --- own expense
+    # -------------------------
+    user_total = db.query(func.sum(Record.amount)).filter(
+        Record.created_by == user.id,
+        *base_filter
+    ).scalar() or 0
 
-    # Analyst → department data
-    elif user.role_id == ANALYST:
-        total = query.join(User, Record.created_by == User.id)\
-                     .filter(User.department_id == user.department_id)\
-                     .scalar()
+    response = {
+        "user_total_expense": user_total
+    }
 
-    # User → own data
-    else:
-        total = query.filter(Record.created_by == user.id).scalar()
+    # -------------------------
+    # ANALYST --- department total
+    # -------------------------
+    if user.role_id == ANALYST:
+        dept_total = db.query(func.sum(Record.amount))\
+            .join(User, Record.created_by == User.id)\
+            .filter(
+                User.department_id == user.department_id,
+                *base_filter
+            ).scalar() or 0
 
-    return {"total_expense": total or 0}
+        response["department_total_expense"] = dept_total
+
+    # -------------------------
+    # ADMIN --- global total
+    # -------------------------
+    elif user.role_id == ADMIN:
+        global_total = db.query(func.sum(Record.amount)).filter(
+            *base_filter
+        ).scalar() or 0
+
+        response["global_total_expense"] = global_total
+
+    return response
+
+@router.get("/total")
+def net_balance_and_income(
+    db: Session = Depends(get_db),
+    user = Depends(get_current_user)
+):
+    base_filter = [Record.status == "approved"]
+
+    # -------------------------
+    # USER (always include)
+    # -------------------------
+    user_income = db.query(func.sum(Record.amount)).filter(
+        Record.type == "income",
+        Record.created_by == user.id,
+        *base_filter
+    ).scalar() or 0
+
+    user_expense = db.query(func.sum(Record.amount)).filter(
+        Record.type == "expense",
+        Record.created_by == user.id,
+        *base_filter
+    ).scalar() or 0
+
+    response = {
+        "user": {
+            "income": user_income,
+            "expense": user_expense,
+            "net_balance": user_income - user_expense
+        }
+    }
+
+    # -------------------------
+    # ANALYST → department
+    # -------------------------
+    if user.role_id == ANALYST:
+        dept_income = db.query(func.sum(Record.amount))\
+            .join(User, Record.created_by == User.id)\
+            .filter(
+                Record.type == "income",
+                User.department_id == user.department_id,
+                *base_filter
+            ).scalar() or 0
+
+        dept_expense = db.query(func.sum(Record.amount))\
+            .join(User, Record.created_by == User.id)\
+            .filter(
+                Record.type == "expense",
+                User.department_id == user.department_id,
+                *base_filter
+            ).scalar() or 0
+
+        response["department"] = {
+            "income": dept_income,
+            "expense": dept_expense,
+            "net_balance": dept_income - dept_expense
+        }
+
+    # -------------------------
+    # ADMIN → global
+    # -------------------------
+    elif user.role_id == ADMIN:
+        global_income = db.query(func.sum(Record.amount)).filter(
+            Record.type == "income",
+            *base_filter
+        ).scalar() or 0
+
+        global_expense = db.query(func.sum(Record.amount)).filter(
+            Record.type == "expense",
+            *base_filter
+        ).scalar() or 0
+
+        response["global"] = {
+            "income": global_income,
+            "expense": global_expense,
+            "net_balance": global_income - global_expense
+        }
+
+    return response
 
 @router.get("/category-wise")
 def category_wise(
@@ -103,3 +204,92 @@ def recent_activity(
                     .limit(5).all()
 
     return data
+
+@router.get("/summary")
+def get_summary(
+    db: Session = Depends(get_db),
+    user = Depends(get_current_user)
+):
+    def get_data(filter_query):
+        data = db.query(
+            Record.status,
+            Record.type,
+            func.sum(Record.amount).label("total")
+        ).filter(*filter_query)\
+         .group_by(Record.status, Record.type)\
+         .all()
+
+        result = {
+            "approved": {"income": 0, "expense": 0},
+            "pending": {"income": 0, "expense": 0},
+            "rejected": {"income": 0, "expense": 0}
+        }
+
+        for status, type_, total in data:
+            if status in result and type_ in ["income", "expense"]:
+                result[status][type_] = float(total or 0)
+
+        for status in result:
+            result[status]["net_balance"] = (
+                result[status]["income"] - result[status]["expense"]
+            )
+
+        return result
+
+    # -------------------------
+    # USER (always include)
+    # -------------------------
+    user_data = get_data([
+        Record.created_by == user.id
+    ])
+
+    response = {
+        "user": user_data
+    }
+
+    # -------------------------
+    # ANALYST --- department
+    # -------------------------
+    if user.role_id == ANALYST:
+        dept_data = get_data([
+            Record.created_by == User.id,
+            User.department_id == user.department_id
+        ])
+
+        # IMPORTANT: need join
+        dept_data = db.query(
+            Record.status,
+            Record.type,
+            func.sum(Record.amount)
+        ).join(User, Record.created_by == User.id)\
+         .filter(User.department_id == user.department_id)\
+         .group_by(Record.status, Record.type)\
+         .all()
+
+        # reuse builder
+        dept_result = {
+            "approved": {"income": 0, "expense": 0},
+            "pending": {"income": 0, "expense": 0},
+            "rejected": {"income": 0, "expense": 0}
+        }
+
+        for status, type_, total in dept_data:
+            if status in dept_result and type_ in ["income", "expense"]:
+                dept_result[status][type_] = float(total or 0)
+
+        for status in dept_result:
+            dept_result[status]["net_balance"] = (
+                dept_result[status]["income"] - dept_result[status]["expense"]
+            )
+
+        response["department"] = dept_result
+
+    # -------------------------
+    # ADMIN --- global
+    # -------------------------
+    elif user.role_id == ADMIN:
+        global_data = get_data([])
+
+        response["global"] = global_data
+
+    return response

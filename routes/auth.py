@@ -19,6 +19,10 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depend
     if not user:
         raise HTTPException(status_code=401, detail="Invalid email")
 
+    # NEW CHECK
+    if not user.is_active:
+        raise HTTPException(status_code=403, detail="User account is inactive")
+
     if not verify_password(form_data.password, user.password):
         raise HTTPException(status_code=401, detail="Invalid password")
 

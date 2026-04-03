@@ -18,7 +18,7 @@ def home():
 
 # To keep Render Server alive, we can add a simple health check endpoint
 @app.get("/health")
-def health():
+def Render_Service():
     return {"status": "ok"}
 
 app.include_router(user.router)

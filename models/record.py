@@ -10,12 +10,10 @@ class Record(Base):
     id = Column(Integer, primary_key=True, index=True)
 
     amount = Column(Numeric(10, 2), nullable=False)
-    purpose = Column(String)
+    description = Column(String(200))
 
     category_id = Column(Integer, ForeignKey("categories.id"), nullable=False)
     created_by = Column(Integer, ForeignKey("users.id"), nullable=False)
-
-    approval_deadline = Column(TIMESTAMP, nullable=True)    
 
     status = Column(String(20), default="pending")
 
@@ -29,6 +27,8 @@ class Record(Base):
     custom_category = Column(String(100), nullable=True)
     creator = relationship("User", foreign_keys=[created_by])
     reviewer = relationship("User", foreign_keys=[reviewed_by]) 
+
+    type = Column(String(10), nullable=False)  # income / expense
 
     user = relationship(
     "User",

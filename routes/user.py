@@ -5,11 +5,7 @@ from database import get_db
 from models import User, Category
 from schemas.user import UserCreate, UserUpdate
 from utils.dependencies import get_current_user, require_role
-
-# -----------------------------------
-# ROLE DEFINITIONS
-# -----------------------------------
-from utils.roles import ADMIN, ANALYST, USER
+from utils.roles import ADMIN, ANALYST, Viewer as USER
 
 
 
@@ -44,11 +40,11 @@ def get_all_users(
     db: Session = Depends(get_db),
     current_user = Depends(get_current_user)
 ):
-    #  Admin → all users
+    #  Admin -> all users
     if current_user.role_id == ADMIN:
         return db.query(User).all()
 
-    #  Analyst → only same department users
+    #  Analyst -> only same department users
     if current_user.role_id == ANALYST:
         return db.query(User).filter(
             User.department_id == current_user.department_id

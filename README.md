@@ -1,194 +1,266 @@
-# 💰 Finance Data Processing & Access Control Backend
+# Finance Data Processing & Access Control Backend
 
-## 🚀 Live API
+## Live API
 
-👉 https://backend-finance-dashboard.onrender.com/docs
-
-> Use this link to test all APIs directly via Swagger UI.
+https://backend-finance-dashboard.onrender.com/docs
 
 ---
 
-## 📌 Project Overview
+## Overview
 
-This project is a backend system for managing financial records within a company.
-It supports role-based access control, financial data tracking, and dashboard analytics.
-
-The system is designed to simulate a real-world finance dashboard used by organizations.
+This project is a backend system for managing financial records with role-based access control.
+Users interact with data at user, department, and organization levels depending on their role.
 
 ---
 
-## 👥 User Roles
+## Roles
 
-### 🔴 Admin (HR)
+**Admin**
 
-* Create and manage users
+* Manage users (create, update, activate/deactivate)
 * Assign roles and departments
-* Approve or reject financial records
-* View all records and analytics
+* Approve or reject records
+* Access all records and analytics
 
-### 🟡 Analyst
+**Analyst**
 
-* View department-level financial data
-* Analyze spending trends
+* View department-level data
+* Access department analytics
 
-### 🔵 User (Employee)
+**Viewer**
 
-* Create expense records
-* View own records
-
----
-
-## 🧱 Features
-
-* 🔐 Authentication using JWT
-* 👥 Role-based access control (RBAC)
-* 🧾 Financial record management (CRUD)
-* 📊 Dashboard analytics
-* 🏢 Department-based filtering
-* ⏳ Approval workflow with deadline
-* 🆔 Auto-generated Employee ID (Year-based)
+* View personal data
+* View summary data
 
 ---
 
-## 🗄️ Database Design
+## Features
 
-Main tables:
-
-* **users** → stores user details
-* **roles** → admin, analyst, user
-* **departments** → organizational units
-* **records** → financial transactions
-* **categories** → expense categories
-
----
-
-## 🔐 Authentication
-
-Login to get token:
-
-```
-POST /auth/login
-```
-
-Use token in Swagger:
-
-👉 Click **Authorize** → paste token
+* JWT Authentication
+* Role-Based Access Control (RBAC)
+* Financial record management
+* Dashboard analytics (aggregations)
+* Department-level filtering using joins
+* Approval workflow (pending, approved, rejected)
+* Category handling (predefined and custom)
+* Auto-generated employee ID
 
 ---
 
-## 📊 API Endpoints
+## Database Design
 
-### 👤 Users
+Tables:
 
-* `GET /users/` → Get all users (Admin only)
-* `PATCH /users/{id}` → Update role / department
+* roles
+* departments
+* categories
 
-### 🧾 Records
+* users:
+- id
+- name
+- email
+- role_id
+- department_id
+- is_active (true / false)
 
-* `POST /records/` → Create record
-* `GET /records/` → Get the all records
-* `GET /records/my` → Get own records
-* `GET /records/department` → Department records
-* `PATCH /records/{id}/status` → Approve/Reject/Pending (Admin)
+* records:
+- id
+- amount
+- description
+- type (income/expense)
+- created_by
+- status (pending/approved/rejected)
 
-### 📊 Dashboard
+**Design Note**
 
-* `GET /dashboard/total-expense`
-* `GET /dashboard/category-wise`
-* `GET /dashboard/monthly`
-* `GET /dashboard/recent`
+* `records` does not store `department_id`
+* Department is derived using:
+
+  ```
+  Record → User → Department
+  ```
+* Ensures normalization and avoids redundancy
 
 ---
 
-## 🧪 Demo Credentials
+## Authentication
 
-### 🔴 Admin
 
-```
-email: admin@test.com  
+* Click Authorize use USERNAME and PASSWORD from the demo credentials
+* Leave remaining feilds empty 
+* Click Authorize
+
+---
+
+## Demo Credentials
+
+Admin
+email: admin@test.com
 password: 123456
-```
 
-### 🟡 Analyst
-
-```
-email: analyst@test.com  
+Analyst
+email: analyst@test.com
 password: 123456
-```
 
-### 🔵 User
-
-```
-email: user@test.com  
+Viewer
+email: user@test.com
 password: 123456
-```
 
 ---
 
-## ⚙️ Tech Stack
+## Dashboard APIs
 
-* **Backend:** FastAPI
-* **Database:** PostgreSQL (Neon DB)
-* **ORM:** SQLAlchemy
-* **Auth:** JWT (python-jose)
-* **Deployment:** Render
+### GET /dashboard/total-expense
+
+* User → own expenses
+* Analyst → own + department
+* Admin → own + global
+
+### GET /dashboard/total
+
+* Returns income, expense, and net balance
+* net_balance = income - expense
+
+### GET /dashboard/category-wise
+
+* Category-wise totals based on role
+
+### GET /dashboard/monthly
+
+* Month-wise totals
+* Months with no data are not included
+
+### GET /dashboard/recent
+
+* Last 5 records
+* Analyst/Admin also see department/global records
+
+### GET /dashboard/summary
+
+* Status-based aggregation:
+
+  * approved
+  * pending
+  * rejected
+* Viewer → user only
+* Analyst → user + department
+* Admin → user + global
 
 ---
 
-## 🛠️ Local Setup (Optional)
+## Records APIs
 
-```bash
-git clone <your-repo>
-cd project
+### POST /records/
 
+* Admin only
+* Create financial record
+
+### GET /records/my
+
+* All users
+* Returns own records
+
+### GET /records/department
+
+* Analyst, Admin
+* Department records
+
+### GET /records/all
+
+* Admin only
+
+### DELETE /records/{id}
+
+* Admin only
+
+### PATCH /records/{id}/status
+
+* Admin only
+* Approve or reject
+
+### PUT /records/{id}
+
+* Admin only
+* Update record
+
+### GET /records/filter
+
+* Filter by type, category, dates
+
+---
+
+## Users APIs
+
+### POST /users/
+
+* Admin only
+
+### GET /users/get-all
+
+* Admin → all users
+* Analyst → department users
+
+### GET /users/get-categories
+
+* Available to all roles
+
+### PATCH /users/{id}
+
+* Admin only
+
+### GET /users/me
+
+* Current user details
+
+---
+
+## Key Concepts
+
+**Net Balance**
+
+```
+net_balance = income - expense
+```
+
+**Record Status**
+
+* pending → waiting for approval
+* approved → used in analytics
+* rejected → ignored
+
+---
+
+## Tech Stack
+
+* Backend: FastAPI
+* Database: PostgreSQL
+* ORM: SQLAlchemy
+* Authentication: JWT
+* Deployment: [Render](https://backend-finance-dashboard.onrender.com/docs)
+
+---
+
+## Setup
+
+```
 pip install -r requirements.txt
-```
-
-Create `.env`:
-
-```
-DATABASE_URL=your_database_url
-SECRET_KEY=your_secret
-```
-
-Run server:
-
-```bash
 uvicorn main:app --reload
 ```
 
 ---
 
-## 🧠 Design Decisions
+## Design Decisions
 
-* Employee ID is immutable (not updated on role/department change)
-* Role-based filtering enforced at backend
-* Dashboard APIs use aggregation queries
-* Approval workflow implemented using status + deadline
-
----
-
-## 🚀 Future Improvements
-
-* Pagination & filtering
-* CSV export
-* Notifications for approval deadlines
-* Frontend dashboard integration
+* RBAC enforced at backend
+* Department derived using joins
+* Aggregations using SQL functions
+* Status-based filtering for analytics
+* Owner-based access for data integrity
 
 ---
 
-## 🏆 Conclusion
 
-This project demonstrates backend design principles including:
+## Author
 
-* Clean architecture
-* Data modeling
-* Access control
-* Aggregation logic
-* Real-world workflow handling
-
----
-
-## 👨‍💻 Author
-
-Sudharsan Reddy
+S Sudharsan Reddy
+Reference ID: TECV32KY

@@ -4,10 +4,10 @@ from datetime import datetime
 
 class RecordCreate(BaseModel):
     amount: float
-    purpose: str
+    description: str
     category_id: Optional[int] = None
     custom_category: Optional[str] = None
-    approval_date: Optional[datetime] = None   # added
+    type: str  # income / expense
 
 class RecordResponse(BaseModel):
     id: int

@@ -6,42 +6,41 @@ from models import Record
 from models.user import User
 from schemas.record import RecordCreate
 from utils.dependencies import get_current_user
-
-# -----------------------------------
-# ROLE DEFINITIONS
-# -----------------------------------
-from utils.roles import ADMIN, ANALYST, USER
+from utils.roles import ADMIN, ANALYST, Viewer as USER
 
 
 router = APIRouter(prefix="/records", tags=["Records"])
 
-# -----------------------------------
-# CREATE RECORD (ALL LOGGED USERS)
-# -----------------------------------
+
+# -----------------------------
+# CREATE RECORD (Admin only)
+# -----------------------------
+
 @router.post("/")
 def create_record(
     record: RecordCreate,
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user)
 ):
-    #  both empty
+    if current_user.role_id in [ USER, ANALYST ]:
+        raise HTTPException(status_code=403, detail="Viewer or Analyst cannot create records")
+
+    # validation
     if not record.category_id and not record.custom_category:
-        raise HTTPException(status_code=400, detail="Provide category_id or custom_category")
+        raise HTTPException(400, "Provide category_id or custom_category")
 
-    #  both given
     if record.category_id and record.custom_category:
-        raise HTTPException(status_code=400, detail="Choose either category_id or custom_category")
+        raise HTTPException(400, "Choose either category_id or custom_category")
 
-    #  convert 0 → None
     category_id = None if record.category_id == 0 else record.category_id
 
     db_record = Record(
         amount=record.amount,
-        purpose=record.purpose,
+        description=record.description,
         category_id=category_id,
         custom_category=record.custom_category,
         created_by=current_user.id,
-        approval_deadline=record.approval_date,
+        type=record.type,
     )
 
     db.add(db_record)
@@ -51,9 +50,10 @@ def create_record(
     return db_record
 
 
-# -----------------------------------
-# USER → OWN RECORDS
-# -----------------------------------
+# -----------------------------
+# VIEW OWN RECORDS (ALL USERS)
+# -----------------------------
+
 @router.get("/my")
 def get_my_records(
     db: Session = Depends(get_db),
@@ -64,41 +64,121 @@ def get_my_records(
     ).all()
 
 
-# -----------------------------------
-# ANALYST → DEPARTMENT RECORDS ONLY
-# -----------------------------------
+# -----------------------------
+# ANALYST + ADMIN -- DEPARTMENT
+# -----------------------------
+
 @router.get("/department")
 def get_department_records(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user)
 ):
-    if current_user.role_id != ANALYST and current_user.role_id != ADMIN:
+    if current_user.role_id not in [ANALYST, ADMIN]:
         raise HTTPException(status_code=403, detail="Analyst and Admin only")
 
-    return db.query(Record).join(
-        User, Record.created_by == User.id
-    ).filter(
-        User.department_id == current_user.department_id
-    ).all()
+    # -------------------------
+    # ANALYST -- only own dept
+    # -------------------------
+    if current_user.role_id == ANALYST:
+        records = db.query(Record)\
+            .join(User, Record.created_by == User.id)\
+            .filter(User.department_id == current_user.department_id)\
+            .all()
 
+        return records
 
-# -----------------------------------
-# ADMIN → ALL RECORDS
-# -----------------------------------
+    # -------------------------
+    # ADMIN -- group by department
+    # -------------------------
+    records = db.query(Record, User.department_id)\
+        .join(User, Record.created_by == User.id)\
+        .all()
+
+    result = {}
+
+    for record, dept_id in records:
+        dept_key = f"department_{dept_id}"
+
+        if dept_key not in result:
+            result[dept_key] = []
+
+        result[dept_key].append(record)
+
+    return result
+
+# -----------------------------
+# ADMIN -- ALL RECORDS
+# -----------------------------
+
 @router.get("/all")
 def get_all_records(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user)
 ):
     if current_user.role_id != ADMIN:
-        raise HTTPException(status_code=403, detail="Admin only")
+        raise HTTPException(403, "Admin only")
 
     return db.query(Record).all()
 
 
-# -----------------------------------
-# ADMIN → APPROVE / REJECT
-# -----------------------------------
+# -----------------------------
+# DELETE RECORD (Admin only)
+# -----------------------------
+
+@router.delete("/{record_id}")
+def delete_record(
+    record_id: int,
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_user)
+):
+    if current_user.role_id != ADMIN:
+        raise HTTPException(403, "Only admin can delete records")
+
+    record = db.query(Record).filter(Record.id == record_id).first()
+
+    if not record:
+        raise HTTPException(404, "Record not found")
+
+    db.delete(record)
+    db.commit()
+
+    return {"message": "Deleted successfully"}
+
+
+# -----------------------------
+# FILTER (ALL USERS)
+# -----------------------------
+
+@router.get("/filter")
+def filter_records(
+    type: str = None,
+    category_id: int = None,
+    start_date: str = None,
+    end_date: str = None,
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_user)
+):
+    query = db.query(Record)
+
+    if current_user.role_id == USER:
+        query = query.filter(Record.created_by == current_user.id)
+
+    if type:
+        query = query.filter(Record.type == type)
+
+    if category_id:
+        query = query.filter(Record.category_id == category_id)
+
+    if start_date and end_date:
+        query = query.filter(Record.created_at.between(start_date, end_date))
+
+    return query.all()
+
+
+# -----------------------------
+# ADMIN -- APPROVE / REJECT
+# -----------------------------
+
 @router.patch("/{record_id}/status")
 def update_status(
     record_id: int,
@@ -107,15 +187,12 @@ def update_status(
     current_user=Depends(get_current_user)
 ):
     if current_user.role_id != ADMIN:
-        raise HTTPException(status_code=403, detail="Admin only")
-
-    if status not in ["approved", "rejected"]:
-        raise HTTPException(status_code=400, detail="Invalid status")
+        raise HTTPException(403, "Admin only")
 
     record = db.query(Record).filter(Record.id == record_id).first()
 
     if not record:
-        raise HTTPException(status_code=404, detail="Record not found")
+        raise HTTPException(404, "Record not found")
 
     record.status = status
     record.reviewed_by = current_user.id
@@ -129,6 +206,9 @@ def update_status(
         "status": record.status
     }
 
+# -----------------------------
+# UPDATE RECORD (Admin only)
+# -----------------------------
 @router.put("/{record_id}")
 def update_record(
     record_id: int,
@@ -136,32 +216,26 @@ def update_record(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user)
 ):
+    if current_user.role_id != ADMIN:
+        raise HTTPException(403, "Only admin can update records")
+
     record = db.query(Record).filter(Record.id == record_id).first()
 
     if not record:
-        raise HTTPException(status_code=404, detail="Record not found")
+        raise HTTPException(404, "Record not found")
 
-    # Only owner OR admin can edit
-    if record.created_by != current_user.id and current_user.role_id != ADMIN:
-        raise HTTPException(status_code=403, detail="Not allowed to edit this record")
-
-    # both empty
     if not updated_record.category_id and not updated_record.custom_category:
-        raise HTTPException(status_code=400, detail="Provide category_id or custom_category")
+        raise HTTPException(400, "Provide category_id or custom_category")
 
-    # both given
     if updated_record.category_id and updated_record.custom_category:
-        raise HTTPException(status_code=400, detail="Choose either category_id or custom_category")
+        raise HTTPException(400, "Choose either category_id or custom_category")
 
-    # convert 0 → None
     category_id = None if updated_record.category_id == 0 else updated_record.category_id
 
-    # update fields
     record.amount = updated_record.amount
-    record.purpose = updated_record.purpose
+    record.description = updated_record.description
     record.category_id = category_id
     record.custom_category = updated_record.custom_category
-    record.approval_deadline = updated_record.approval_date
 
     db.commit()
     db.refresh(record)
