@@ -6,8 +6,9 @@ from models import User, Category
 from schemas.user import UserCreate, UserUpdate
 from utils.dependencies import get_current_user, require_role
 from utils.roles import ADMIN, ANALYST, Viewer as USER
-
-
+from models import Department
+from utils.security import hash_password
+from models import Role
 
 router = APIRouter(prefix="/users")
 
@@ -15,25 +16,57 @@ router = APIRouter(prefix="/users")
 def create_user(
     user: UserCreate,
     db: Session = Depends(get_db),
-    current_user = Depends(get_current_user)   # add this
+    current_user = Depends(get_current_user)
 ):
-    # Restrict access
-    if current_user.id != ADMIN:  # Only Admin can create users
+
+    if current_user.role_id != ADMIN:
         raise HTTPException(status_code=403, detail="Not authorized")
 
+    existing_user = db.query(User).filter(User.email == user.email).first()
+    if existing_user:
+        raise HTTPException(status_code=400, detail="Email already exists")
+
+    if not user.name or len(user.name.strip()) == 0:
+        raise HTTPException(status_code=400, detail="Name cannot be empty")
+
+    if not user.password:
+        raise HTTPException(status_code=400, detail="Password is required")
+
+    if len(user.password) < 6:
+        raise HTTPException(status_code=400, detail="Password must be at least 6 characters")
+
+    if len(user.password) > 15:
+        raise HTTPException(status_code=400, detail="Password must not exceed 15 characters")
+
+    if not user.role_id or user.role_id <= 0:
+        raise HTTPException(status_code=400, detail="Invalid role_id")
+
+    role = db.query(Role).filter(Role.id == user.role_id).first()
+    if not role:
+        raise HTTPException(status_code=404, detail="Role not found")
+
+    if not user.department_id or user.department_id <= 0:
+        raise HTTPException(status_code=400, detail="Invalid department_id")
+
+
+    dept = db.query(Department).filter(Department.id == user.department_id).first()
+    if not dept:
+        raise HTTPException(status_code=404, detail="Department not found")
+
     db_user = User(
-        name=user.name,
-        email=user.email,
-        password=user.password,
+        name=user.name.strip(),
+        email=user.email.strip(),
+        password=user.password,  # secure
         role_id=user.role_id,
         department_id=user.department_id,
-        emp_id="EMP"  # temporary
     )
 
     db.add(db_user)
     db.commit()
     db.refresh(db_user)
+
     return db_user
+
 
 @router.get("/get-all")
 def get_all_users(

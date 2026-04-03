@@ -7,6 +7,8 @@ from models.user import User
 from schemas.record import RecordCreate
 from utils.dependencies import get_current_user
 from utils.roles import ADMIN, ANALYST, Viewer as USER
+from models import Category
+from datetime import datetime
 
 
 router = APIRouter(prefix="/records", tags=["Records"])
@@ -22,21 +24,36 @@ def create_record(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user)
 ):
-    if current_user.role_id in [ USER, ANALYST ]:
+    if current_user.role_id in [USER, ANALYST]:
         raise HTTPException(status_code=403, detail="Viewer or Analyst cannot create records")
 
-    # validation
+    if record.amount is None or record.amount <= 0:
+        raise HTTPException(status_code=400, detail="Amount must be greater than 0")
+
+    if record.type not in ["income", "expense"]:
+        raise HTTPException(status_code=400, detail="Type must be 'income' or 'expense'")
+
     if not record.category_id and not record.custom_category:
-        raise HTTPException(400, "Provide category_id or custom_category")
+        raise HTTPException(status_code=400, detail="Provide category_id or custom_category")
 
     if record.category_id and record.custom_category:
-        raise HTTPException(400, "Choose either category_id or custom_category")
+        raise HTTPException(status_code=400, detail="Choose either category_id or custom_category")
+
+    if not record.description or len(record.description.strip()) == 0:
+        raise HTTPException(status_code=400, detail="Description cannot be empty")
+
+    if len(record.description) > 255:
+        raise HTTPException(status_code=400, detail="Description too long (max 255 characters)")
+
+    if record.category_id:
+        category = db.query(Category).filter(Category.id == record.category_id).first()
+        if not category:
+            raise HTTPException(status_code=404, detail="Category not found")
 
     category_id = None if record.category_id == 0 else record.category_id
-
     db_record = Record(
         amount=record.amount,
-        description=record.description,
+        description=record.description.strip(),
         category_id=category_id,
         custom_category=record.custom_category,
         created_by=current_user.id,
@@ -186,16 +203,26 @@ def update_status(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user)
 ):
+
     if current_user.role_id != ADMIN:
-        raise HTTPException(403, "Admin only")
+        raise HTTPException(status_code=403, detail="Admin only authorized")
+
+    allowed_status = ["pending", "approved", "rejected"]
+
+    if status not in allowed_status:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid status. Allowed values: {allowed_status}"
+        )
 
     record = db.query(Record).filter(Record.id == record_id).first()
 
     if not record:
-        raise HTTPException(404, "Record not found")
+        raise HTTPException(status_code=404, detail="Record not found")
 
     record.status = status
     record.reviewed_by = current_user.id
+    record.reviewed_at = datetime.utcnow()
 
     db.commit()
     db.refresh(record)
@@ -203,7 +230,9 @@ def update_status(
     return {
         "message": "Status updated",
         "record_id": record.id,
-        "status": record.status
+        "status": record.status,
+        "reviewed_by": record.reviewed_by,
+        "reviewed_at": record.reviewed_at
     }
 
 # -----------------------------
@@ -224,18 +253,35 @@ def update_record(
     if not record:
         raise HTTPException(404, "Record not found")
 
+    if updated_record.amount is None or updated_record.amount <= 0:
+        raise HTTPException(status_code=400, detail="Amount must be greater than 0")
+
+    if updated_record.type not in ["income", "expense"]:
+        raise HTTPException(status_code=400, detail="Type must be 'income' or 'expense'")
+    
+    if not updated_record.description or len(updated_record.description.strip()) == 0:
+        raise HTTPException(status_code=400, detail="Description cannot be empty")
+
+    if len(updated_record.description) > 255:
+        raise HTTPException(status_code=400, detail="Description too long (max 255 characters)")
+
     if not updated_record.category_id and not updated_record.custom_category:
         raise HTTPException(400, "Provide category_id or custom_category")
 
     if updated_record.category_id and updated_record.custom_category:
         raise HTTPException(400, "Choose either category_id or custom_category")
 
-    category_id = None if updated_record.category_id == 0 else updated_record.category_id
+    if updated_record.category_id:
+        category = db.query(Category).filter(Category.id == updated_record.category_id).first()
+        if not category:
+            raise HTTPException(status_code=404, detail="Category not found")
 
+    category_id = None if updated_record.category_id == 0 else updated_record.category_id
     record.amount = updated_record.amount
     record.description = updated_record.description
     record.category_id = category_id
     record.custom_category = updated_record.custom_category
+    record.type = updated_record.type
 
     db.commit()
     db.refresh(record)

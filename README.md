@@ -127,7 +127,8 @@ password: 123456
 
 ### GET /dashboard/monthly
 
-* Month-wise totals
+* Month-wise totals (used for trend analysis)
+* Helps visualize income/expense trends over time
 * Months with no data are not included
 
 ### GET /dashboard/recent
@@ -243,6 +244,9 @@ net_balance = income - expense
 ## Setup
 
 ```
+git clone https://github.com/sudharsan-051006/Backend-finance-dashboard
+cd Backend-finance-dashboard
+
 pip install -r requirements.txt
 uvicorn main:app --reload
 ```
